@@ -152,8 +152,13 @@ input,textarea{font:inherit;color:var(--tx)}
 .tile.speak .fig{animation:bob .5s ease-in-out infinite}
 @keyframes bob{50%{transform:translateY(-4px)}}
 .tile .tag{position:absolute;left:10px;bottom:10px;background:#000b;padding:3px 10px;border-radius:8px;font-size:13px;font-weight:700;display:flex;gap:6px;align-items:center;z-index:1}
-.tile.focus{grid-column:1/-1;aspect-ratio:auto;height:100%}
-#grid.hasfocus .tile:not(.focus){display:none}
+/* modo destaque: tela grande em cima, miniaturas embaixo */
+#grid.hasfocus{display:flex;flex-wrap:wrap;align-content:flex-start;justify-content:center;overflow:hidden}
+.tile.focus{flex:1 1 100%;width:100%;aspect-ratio:auto;height:calc(100% - 106px);min-height:0;background:#000;order:-1}
+#grid.hasfocus.solo .tile.focus{height:100%}
+#grid.hasfocus .tile:not(.focus){aspect-ratio:auto;width:170px;height:96px;flex:none}
+#grid.hasfocus .tile:not(.focus) .fig{height:80%}
+#grid.hasfocus .tile:not(.focus) .tag{font-size:11px;left:6px;bottom:6px;padding:1px 6px}
 #vbar{flex:none;display:flex;justify-content:center;gap:12px;padding:12px 12px max(12px,env(safe-area-inset-bottom));background:#070505}
 #vbar button{width:54px;height:54px;border-radius:50%;background:var(--bg3);font-size:20px;transition:transform .1s}
 #vbar button:hover{background:var(--bg4);transform:translateY(-1px)}
@@ -941,10 +946,21 @@ function renderGrid() {
   }
   const hasFocus = tiles.some(t => t.key === fk)
   grid.classList.toggle('hasfocus', hasFocus)
-  const n = hasFocus ? 1 : tiles.length
-  let cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4
-  cols = Math.max(1, Math.min(cols, Math.floor(grid.clientWidth / 240) || 1))
-  grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`
+  if (hasFocus) {
+    // miniaturas numa linha só embaixo da tela em destaque
+    const others = tiles.length - 1
+    const fit = Math.max(1, Math.floor((grid.clientWidth - 20) / 150))
+    grid.classList.toggle('solo', others === 0)
+    grid.querySelectorAll('.tile:not(.focus)').forEach((el, i) => { el.style.display = i < fit ? '' : 'none' })
+    grid.style.gridTemplateColumns = ''
+  } else {
+    grid.classList.remove('solo')
+    grid.querySelectorAll('.tile').forEach(el => { el.style.display = '' })
+    const n = tiles.length
+    let cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4
+    cols = Math.max(1, Math.min(cols, Math.floor(grid.clientWidth / 240) || 1))
+    grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`
+  }
   renderMe()
 }
 addEventListener('resize', () => me.voice && renderGrid())
