@@ -178,6 +178,22 @@ input,textarea{font:inherit;color:var(--tx)}
 .ver{font-size:10px;color:var(--tx3);text-align:center;padding:2px 0 4px;background:#100b0a}
 #updbar{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:70;background:var(--fire);color:#1a0905;font-weight:800;padding:10px 14px;border-radius:12px;box-shadow:0 8px 30px #000a;display:flex;gap:10px;align-items:center}
 #updbar button{background:#1a0905;color:#ffd23f;border-radius:8px;padding:6px 12px;font-weight:800}
+/* transcrição */
+#captions{flex:none;background:#0d0908;border-top:1px solid #3a1a12;padding:8px 16px 10px;max-height:150px;overflow:hidden}
+#captions .txbadge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:800;letter-spacing:.06em;color:#ffb23f;text-transform:uppercase;margin-bottom:4px}
+#captions .txbadge::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--bad);animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.25}}
+#captions .ln{font-size:15px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#captions .ln b{color:#ffb23f;margin-right:6px}
+#captions .ln.interim{color:var(--tx2);font-style:italic}
+#txdone{position:fixed;inset:0;z-index:65;background:#000b;display:grid;place-items:center;padding:16px}
+#txdone .box{background:var(--bg2);border:1px solid #ff8a1f55;border-radius:16px;padding:22px;max-width:560px;width:100%;box-shadow:0 20px 60px #000c}
+#txdone h3{margin:0 0 4px;font-size:20px}
+#txdone p{margin:0 0 12px;color:var(--tx2);font-size:14px}
+#txdone pre{background:#0c0808;border-radius:10px;padding:12px;max-height:260px;overflow:auto;white-space:pre-wrap;font:13px/1.45 ui-monospace,Menlo,monospace;color:var(--tx);margin:0 0 14px}
+#txdone .acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+#txdone select{background:var(--bg3);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:9px;font:inherit}
+#txdone .ghost{border:1px solid var(--line);border-radius:10px;padding:11px 14px;color:var(--tx2)}
 #vjoin{flex:1;display:grid;place-items:center;text-align:center;background:radial-gradient(ellipse at 50% 100%,#3a160c,#0c0909 65%);padding:16px}
 #vjoin .figs{display:flex;justify-content:center;gap:6px;margin-bottom:12px;min-height:90px;align-items:flex-end}
 #vjoin .figs img{height:88px;image-rendering:pixelated}
@@ -318,10 +334,12 @@ input,textarea{font:inherit;color:var(--tx)}
         <div><div class="figs" id="vjFigs"></div><h2 id="vjTitle"></h2><p id="vjSub"></p><button class="btn" id="vjBtn">Entrar na sala</button></div>
       </div>
       <div id="grid" class="hidden"></div>
+      <div id="captions" class="hidden"></div>
       <div id="vbar" class="hidden">
         <button id="vMic" class="tg"><span class="i">🎙️</span><span class="l">Microfone</span></button>
         <button id="vCam" class="tg"><span class="i">📷</span><span class="l">Câmera</span></button>
         <button id="vScreen" class="tg"><span class="i">🖥️</span><span class="l">Tela</span></button>
+        <button id="vTx" class="tg"><span class="i">📝</span><span class="l">Transcrever</span></button>
         <button id="vLeave" class="tg leave"><span class="i">📞</span><span class="l">Sair</span></button>
       </div>
     </section>
@@ -355,7 +373,7 @@ const VOICE_ROOMS = [
   {id: 'cafe',       name: 'Café ☕'},
 ]
 const APP_ID = 'vzn-qg-v1'
-const APP_VERSION = '5'           // aumente a cada atualização: avisa a equipe para recarregar
+const APP_VERSION = '6'           // aumente a cada atualização: avisa a equipe para recarregar
 const HISTORY_LIMIT = 300
 /* ===================================================================== */
 
@@ -709,6 +727,7 @@ function renderMe() {
   setTg('vMic', me.mic ? 'is-on' : 'is-muted', me.mic ? 'Mic ligado' : 'Mudo')
   for (const id of ['vCam', 'pCam']) setTg(id, me.cam ? 'is-on' : 'is-off', me.cam ? 'Câmera ligada' : 'Câmera')
   for (const id of ['vScreen', 'pScreen']) setTg(id, me.screen ? 'is-live' : 'is-off', me.screen ? 'Ao vivo' : 'Tela')
+  setTg('vTx', tx.on ? 'is-live' : 'is-off', tx.on ? 'Transcrevendo' : 'Transcrever')
 }
 function setTg(id, state, label) {
   const b = $(id); b.classList.remove('is-on', 'is-off', 'is-live', 'is-muted'); b.classList.add(state)
@@ -816,7 +835,9 @@ async function joinVoice(roomId) {
     try { vroom.removeStream(screenStream, {target: peerId}) } catch {}
     vroom.addStream(screenStream, {target: peerId, metadata: {k: 'screen'}})
   }
+  txSetup()
   vroom.onPeerJoin = id => {
+    if (tx.on) vact.tx.send({on: true, by: tx.by, since: tx.since}, {target: id})
     vroom.addStream(localStream, {target: id})
     if (screenStream) vroom.addStream(screenStream, {target: id, metadata: {k: 'screen'}})
   }
@@ -850,6 +871,7 @@ function dropRemote(id) {
 }
 async function leaveVoice(switching) {
   if (!me.voice) return
+  txLeave()
   stopScreen(true)
   if (camTrack) { camTrack.stop(); camTrack = null }
   localStream?.getTracks().forEach(t => t.stop()); localStream = null
@@ -928,6 +950,124 @@ $('bDeaf').onclick = () => setDeaf(!me.deaf)
 $('vCam').onclick = $('pCam').onclick = toggleCam
 $('vScreen').onclick = $('pScreen').onclick = toggleScreen
 $('vLeave').onclick = $('pLeave').onclick = () => leaveVoice()
+$('vTx').onclick = () => {
+  if (!me.voice) return
+  if (tx.on) { if (confirm('Parar a transcrição para todos da sala?')) txStop(me.name, true) }
+  else txStart(me.name, Date.now(), true)
+}
+
+/* ---------------- transcrição (grátis, do próprio navegador) ----------------
+   Só roda quando alguém liga. Cada pessoa transcreve apenas o PRÓPRIO
+   microfone (Chrome/Edge) e manda o texto para a sala, já com o nome. */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+const tx = {on: false, by: '', since: 0, lines: [], interim: {}, rec: null, want: false, lastInterim: 0, room: ''}
+function txSetup() {
+  vact.tx = vroom.makeAction('tx')
+  vact.tl = vroom.makeAction('tl')
+  vact.tx.onMessage = d => {
+    if (!d || typeof d.by !== 'string') return
+    if (d.on) txStart(d.by.slice(0, 24), Number(d.since) || Date.now(), false)
+    else txStop(d.by.slice(0, 24), false)
+  }
+  vact.tl.onMessage = (d, {peerId}) => {
+    if (!tx.on || !d || typeof d.text !== 'string') return
+    txLine(peerId, peers[peerId]?.name || '?', d.text.slice(0, 1000), !!d.final, typeof d.id === 'string' ? d.id : uid())
+  }
+}
+function txStart(by, since, local) {
+  if (tx.on || !me.voice) return
+  Object.assign(tx, {on: true, by, since, lines: [], interim: {}, room: VOICE_ROOMS.find(r => r.id === me.voice)?.name || ''})
+  if (local) { vact.tx.send({on: true, by, since}); toast('📝 Transcrição ligada. Todos na sala foram avisados.') }
+  else { toast(`📝 ${by} ligou a transcrição desta sala.`, 5000); beep(990) }
+  recStart(); renderCaptions(); renderMe()
+}
+function txStop(by, local) {
+  if (!tx.on) return
+  recStop(); tx.on = false
+  if (local) vact.tx?.send({on: false, by})
+  else toast(`📝 ${by} parou a transcrição.`)
+  renderCaptions(); renderMe(); showTxDone()
+}
+function txLeave() { if (tx.on) { recStop(); tx.on = false; renderCaptions(); renderMe(); showTxDone() } }
+function recStart() {
+  if (!SR) return toast('Seu navegador não faz transcrição: sua fala não vai aparecer. Use Chrome ou Edge.', 7000)
+  tx.want = true
+  const rec = tx.rec = new SR()
+  rec.lang = 'pt-BR'; rec.continuous = true; rec.interimResults = true
+  rec.onresult = e => {
+    if (!me.mic || me.deaf) return            // mudo = nada é transcrito
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const text = e.results[i][0].transcript.trim(); if (!text) continue
+      if (e.results[i].isFinal) {
+        const id = uid(); txLine(selfId, me.name, text, true, id); vact.tl?.send({text, final: true, id})
+      } else {
+        txLine(selfId, me.name, text, false)
+        if (Date.now() - tx.lastInterim > 700) { tx.lastInterim = Date.now(); vact.tl?.send({text, final: false}) }
+      }
+    }
+  }
+  rec.onerror = e => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { tx.want = false; toast('O navegador bloqueou a transcrição do seu microfone.', 6000) }
+    else if (e.error === 'network') toast('Transcrição sem internet no momento, tentando de novo…')
+  }
+  rec.onend = () => { if (tx.want && tx.rec === rec) setTimeout(() => { if (tx.want && tx.rec === rec) try { rec.start() } catch {} }, 250) }
+  try { rec.start() } catch {}
+}
+function recStop() { tx.want = false; try { tx.rec?.stop() } catch {} tx.rec = null }
+function txLine(pid, name, text, final, id) {
+  if (final) {
+    if (!tx.lines.some(l => l.id === id)) tx.lines.push({id, name, text, ts: Date.now()})
+    delete tx.interim[pid]
+  } else tx.interim[pid] = {name, text}
+  renderCaptions()
+}
+function renderCaptions() {
+  const el = $('captions')
+  el.classList.toggle('hidden', !tx.on || !me.voice)
+  if (!tx.on) return
+  const last = tx.lines.slice(-3).map(l => `<div class="ln"><b>${esc(l.name)}</b>${esc(l.text)}</div>`).join('')
+  const live = Object.values(tx.interim).map(l => `<div class="ln interim"><b>${esc(l.name)}</b>${esc(l.text)}…</div>`).join('')
+  el.innerHTML = `<div class="txbadge">Transcrevendo · ligada por ${esc(tx.by)}</div>${last}${live || (last ? '' : '<div class="ln interim">Aguardando alguém falar…</div>')}`
+}
+function txText() {
+  const d = new Date(tx.since)
+  const head = `TRANSCRIÇÃO — VZN QG\nSala: ${tx.room}\nInício: ${d.toLocaleString('pt-BR')}\nLigada por: ${tx.by}\n\n`
+  return head + tx.lines.map(l => `[${fmtTime(l.ts)}] ${l.name}: ${l.text}`).join('\n')
+}
+function showTxDone() {
+  document.getElementById('txdone')?.remove()
+  if (!tx.lines.length) return toast('Transcrição encerrada (ninguém falou).')
+  const box = document.createElement('div'); box.id = 'txdone'
+  box.innerHTML = `<div class="box"><h3>📝 Transcrição encerrada</h3>
+    <p>${tx.lines.length} falas registradas. Só uma pessoa precisa salvar no chat.</p>
+    <pre></pre>
+    <div class="acts">
+      <button class="btn" data-a="dl">Baixar .txt</button>
+      <select>${TEXT_CHANNELS.map(c => `<option value="${c.id}">#${esc(c.name)}</option>`).join('')}</select>
+      <button class="btn" data-a="chat">Salvar no chat</button>
+      <button class="ghost" data-a="close">Fechar</button>
+    </div></div>`
+  box.querySelector('pre').textContent = txText()
+  box.onclick = e => {
+    const a = e.target.dataset?.a
+    if (e.target === box || a === 'close') return box.remove()
+    if (a === 'dl') {
+      const d = new Date(tx.since), p = n => String(n).padStart(2, '0')
+      const url = URL.createObjectURL(new Blob([txText()], {type: 'text/plain;charset=utf-8'}))
+      const link = Object.assign(document.createElement('a'), {href: url, download: `transcricao-${tx.room.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w]+/g, '-')}-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}h${p(d.getMinutes())}.txt`})
+      document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000)
+    }
+    if (a === 'chat') {
+      const ch = box.querySelector('select').value, text = txText()
+      for (let i = 0, part = 0; i < text.length; i += 3900, part++) {
+        const m = {id: uid(), ch, text: (part ? '(continuação)\n' : '📝 ') + text.slice(i, i + 3900), ts: Date.now() + part, name: me.name, av: me.av}
+        addMsg(m, false); act.msg.send(m)
+      }
+      box.remove(); toast('Transcrição salva no chat em #' + TEXT_CHANNELS.find(c => c.id === ch).name)
+    }
+  }
+  document.body.appendChild(box)
+}
 addEventListener('beforeunload', () => { try { vroom?.leave(); lobby?.leave() } catch {} })
 
 const liveVideo = s => s?.getVideoTracks().filter(t => t.readyState === 'live').pop() || null
