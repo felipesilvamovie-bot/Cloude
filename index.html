@@ -95,10 +95,7 @@ input,textarea{font:inherit;color:var(--tx)}
 #vpanel .st{color:var(--ok);font-weight:700;font-size:14px}
 #vpanel .where{font-size:12px;color:var(--tx2);margin-bottom:8px}
 #vpanel .row{display:flex;gap:6px}
-#vpanel .row button{flex:1;background:var(--bg3);border-radius:8px;padding:7px 0;font-size:15px}
-#vpanel .row button:hover{background:var(--bg4)}
-#vpanel .row button.act{background:var(--fire2);color:#1a0905}
-#vpanel .row button.leave{background:#5a1a17;color:#fff}
+#vpanel .row > *{flex:1}
 #mepanel{background:#100b0a;padding:8px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--line)}
 #mepanel .av{width:34px;height:34px}
 #mepanel .who{flex:1;min-width:0}
@@ -106,7 +103,9 @@ input,textarea{font:inherit;color:var(--tx)}
 #mepanel .who span{font-size:12px;color:var(--tx2)}
 .ibtn{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;font-size:15px;color:var(--tx2);position:relative}
 .ibtn:hover{background:var(--bg4);color:var(--tx)}
-.ibtn.off::after{content:"";position:absolute;width:22px;height:2px;background:var(--bad);transform:rotate(-45deg);border-radius:2px}
+.ibtn.on{background:#14a35a2e;box-shadow:inset 0 0 0 1px #2bd47a88}
+.ibtn.off{background:linear-gradient(135deg,#ff4d4d,#c41d1d);color:#fff;box-shadow:0 0 12px #ff4d4d55}
+.ibtn.off::after{content:"";position:absolute;width:24px;height:3px;background:#fff;transform:rotate(-45deg);border-radius:2px;box-shadow:0 0 0 1px #c41d1d}
 
 #main{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg2)}
 #topbar{height:56px;flex:none;display:flex;align-items:center;gap:8px;padding:0 16px;border-bottom:1px solid var(--line);font-weight:700}
@@ -159,12 +158,26 @@ input,textarea{font:inherit;color:var(--tx)}
 #grid.hasfocus .tile:not(.focus){aspect-ratio:auto;width:170px;height:96px;flex:none}
 #grid.hasfocus .tile:not(.focus) .fig{height:80%}
 #grid.hasfocus .tile:not(.focus) .tag{font-size:11px;left:6px;bottom:6px;padding:1px 6px}
-#vbar{flex:none;display:flex;justify-content:center;gap:12px;padding:12px 12px max(12px,env(safe-area-inset-bottom));background:#070505}
-#vbar button{width:54px;height:54px;border-radius:50%;background:var(--bg3);font-size:20px;transition:transform .1s}
-#vbar button:hover{background:var(--bg4);transform:translateY(-1px)}
-#vbar button.act{background:var(--fire);color:#1a0905}
-#vbar button.offc{background:#5a1a17}
-#vbar button.leave{background:var(--bad);color:#fff}
+#vbar{flex:none;display:flex;justify-content:center;gap:10px;padding:12px 12px max(12px,env(safe-area-inset-bottom));background:#070505;flex-wrap:wrap}
+/* botões com estado bem claro: LIGADO = colorido e brilhante, DESLIGADO = apagado */
+.tg{min-width:96px;height:58px;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;transition:transform .1s,filter .1s;border:2px solid transparent}
+.tg .i{font-size:20px;line-height:1}
+.tg .l{font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
+.tg:hover{transform:translateY(-1px);filter:brightness(1.12)}
+.tg.is-off{background:#1c1514;color:#6f625d;border-color:#2c2220}
+.tg.is-off .i{filter:grayscale(1) opacity(.45)}
+.tg.is-on{background:linear-gradient(135deg,#2bd47a,#14a35a);color:#04210f;box-shadow:0 0 18px #2bd47a66;border-color:#7dffb4}
+.tg.is-live{background:var(--fire);color:#1a0905;box-shadow:0 0 20px #ff6b1a88;border-color:#ffd23f;animation:livepulse 1.6s ease-in-out infinite}
+.tg.is-muted{background:linear-gradient(135deg,#ff4d4d,#c41d1d);color:#fff;box-shadow:0 0 18px #ff4d4d66;border-color:#ff9b9b}
+@keyframes livepulse{50%{box-shadow:0 0 34px #ff6b1aaa}}
+.tg.leave{background:#3a1110;color:#ff8f8f;border-color:#5a1a17}
+.tg.leave:hover{background:var(--bad);color:#fff}
+#vpanel .row .tg{min-width:0;height:46px;border-radius:10px}
+#vpanel .row .tg .i{font-size:16px}
+#vpanel .row .tg .l{font-size:9px}
+.ver{font-size:10px;color:var(--tx3);text-align:center;padding:2px 0 4px;background:#100b0a}
+#updbar{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:70;background:var(--fire);color:#1a0905;font-weight:800;padding:10px 14px;border-radius:12px;box-shadow:0 8px 30px #000a;display:flex;gap:10px;align-items:center}
+#updbar button{background:#1a0905;color:#ffd23f;border-radius:8px;padding:6px 12px;font-weight:800}
 #vjoin{flex:1;display:grid;place-items:center;text-align:center;background:radial-gradient(ellipse at 50% 100%,#3a160c,#0c0909 65%);padding:16px}
 #vjoin .figs{display:flex;justify-content:center;gap:6px;margin-bottom:12px;min-height:90px;align-items:flex-end}
 #vjoin .figs img{height:88px;image-rendering:pixelated}
@@ -271,9 +284,9 @@ input,textarea{font:inherit;color:var(--tx)}
       <div class="st">● Voz conectada</div>
       <div class="where" id="vwhere"></div>
       <div class="row">
-        <button id="pCam" title="Câmera">📷</button>
-        <button id="pScreen" title="Compartilhar tela">🖥️</button>
-        <button id="pLeave" class="leave" title="Sair da sala">✕</button>
+        <button id="pCam" class="tg"><span class="i">📷</span><span class="l">Câmera</span></button>
+        <button id="pScreen" class="tg"><span class="i">🖥️</span><span class="l">Tela</span></button>
+        <button id="pLeave" class="tg leave"><span class="i">✕</span><span class="l">Sair</span></button>
       </div>
     </div>
     <div id="mepanel">
@@ -283,6 +296,7 @@ input,textarea{font:inherit;color:var(--tx)}
       <button class="ibtn" id="bDeaf" title="Ouvir os outros">🎧</button>
       <button class="ibtn" id="bOut" title="Sair">⏻</button>
     </div>
+    <div class="ver" id="ver"></div>
   </aside>
 
   <main id="main">
@@ -305,10 +319,10 @@ input,textarea{font:inherit;color:var(--tx)}
       </div>
       <div id="grid" class="hidden"></div>
       <div id="vbar" class="hidden">
-        <button id="vMic" title="Microfone">🎙️</button>
-        <button id="vCam" title="Câmera">📷</button>
-        <button id="vScreen" title="Compartilhar tela">🖥️</button>
-        <button id="vLeave" class="leave" title="Sair da sala">📞</button>
+        <button id="vMic" class="tg"><span class="i">🎙️</span><span class="l">Microfone</span></button>
+        <button id="vCam" class="tg"><span class="i">📷</span><span class="l">Câmera</span></button>
+        <button id="vScreen" class="tg"><span class="i">🖥️</span><span class="l">Tela</span></button>
+        <button id="vLeave" class="tg leave"><span class="i">📞</span><span class="l">Sair</span></button>
       </div>
     </section>
   </main>
@@ -341,6 +355,7 @@ const VOICE_ROOMS = [
   {id: 'cafe',       name: 'Café ☕'},
 ]
 const APP_ID = 'vzn-qg-v1'
+const APP_VERSION = '5'           // aumente a cada atualização: avisa a equipe para recarregar
 const HISTORY_LIMIT = 300
 /* ===================================================================== */
 
@@ -670,7 +685,7 @@ function renderSide() {
   $('chanlist').innerHTML = h
   const vr = VOICE_ROOMS.find(r => r.id === me.voice)
   $('vpanel').classList.toggle('hidden', !vr)
-  if (vr) { $('vwhere').textContent = vr.name; $('pCam').classList.toggle('act', me.cam); $('pScreen').classList.toggle('act', me.screen) }
+  if (vr) $('vwhere').textContent = vr.name
 }
 function renderMembers() {
   const all = everyone()
@@ -687,9 +702,18 @@ function renderMe() {
   $('meName').textContent = me.name
   const vr = VOICE_ROOMS.find(r => r.id === me.voice)
   $('meStatus').textContent = vr ? '🔊 ' + vr.name : 'Online'
-  $('bMic').classList.toggle('off', !me.mic); $('bDeaf').classList.toggle('off', me.deaf)
-  $('vMic').classList.toggle('offc', !me.mic)
-  $('vCam').classList.toggle('act', me.cam); $('vScreen').classList.toggle('act', me.screen)
+  $('bMic').classList.toggle('off', !me.mic); $('bMic').classList.toggle('on', me.mic)
+  $('bMic').title = me.mic ? 'Microfone LIGADO (clique para mutar)' : 'Microfone MUDO (clique para ligar)'
+  $('bDeaf').classList.toggle('off', me.deaf); $('bDeaf').classList.toggle('on', !me.deaf)
+  $('bDeaf').title = me.deaf ? 'Áudio dos outros DESLIGADO' : 'Ouvindo os outros'
+  setTg('vMic', me.mic ? 'is-on' : 'is-muted', me.mic ? 'Mic ligado' : 'Mudo')
+  for (const id of ['vCam', 'pCam']) setTg(id, me.cam ? 'is-on' : 'is-off', me.cam ? 'Câmera ligada' : 'Câmera')
+  for (const id of ['vScreen', 'pScreen']) setTg(id, me.screen ? 'is-live' : 'is-off', me.screen ? 'Ao vivo' : 'Tela')
+}
+function setTg(id, state, label) {
+  const b = $(id); b.classList.remove('is-on', 'is-off', 'is-live', 'is-muted'); b.classList.add(state)
+  b.querySelector('.l').textContent = label
+  b.title = label
 }
 function renderView() {
   const isText = view.type === 'text'
@@ -985,6 +1009,16 @@ setInterval(() => {
     } else delete screenWait[id]
   }
   if (changed) renderGrid()
+  // vídeo que deveria aparecer mas está sem imagem há mais de 8 s
+  document.querySelectorAll('#grid .tile').forEach(el => {
+    const v = el.querySelector('video'), tag = el.querySelector('.tag')
+    const showing = v.style.display !== 'none' && v.srcObject
+    if (showing && v.videoWidth === 0) {
+      el.dataset.zero ||= now
+      if (now - el.dataset.zero > 8000 && !tag.querySelector('.noimg')) tag.insertAdjacentHTML('beforeend', ' <span class="noimg">· ⚠️ imagem não chegou</span>')
+      if (now - el.dataset.zero > 8000 && el.classList.contains('screen')) { const id = el.dataset.pid, w = screenWait[id] ||= {since: now, asked: 0}; if (now - w.asked > 8000) { w.asked = now; vact.rs?.send(1, {target: id}) } }
+    } else { delete el.dataset.zero; tag.querySelector('.noimg')?.remove() }
+  })
 }, 2000)
 
 /* quem está falando (anel verde + bonequinho pulando) */
@@ -1011,6 +1045,24 @@ setInterval(() => {
     document.querySelectorAll('.vm').forEach(v => v.querySelector('.av')?.classList.toggle('speak', speaking.has(v.dataset.pid)))
   }
 }, 120)
+
+/* ---------------- atualização automática ----------------
+   O GitHub deixa o navegador guardar a página por 10 min. A cada minuto
+   o app busca a versão publicada e, se mudou, oferece recarregar. */
+$('ver').textContent = 'VZN QG · versão ' + APP_VERSION
+async function checkUpdate() {
+  try {
+    const r = await fetch(location.pathname + '?check=' + Date.now(), {cache: 'no-store'})
+    const v = (await r.text()).match(/const APP_VERSION = '([^']+)'/)?.[1]
+    if (v && v !== APP_VERSION && !$('updbar')) {
+      const bar = document.createElement('div'); bar.id = 'updbar'
+      bar.innerHTML = '🔥 Nova versão do VZN QG disponível <button>Atualizar agora</button>'
+      bar.querySelector('button').onclick = () => { location.href = location.pathname + '?v=' + encodeURIComponent(v) }
+      document.body.appendChild(bar)
+    }
+  } catch {}
+}
+setTimeout(checkUpdate, 5000); setInterval(checkUpdate, 60000)
 
 function beep(freq, vol = .07) {
   try {
