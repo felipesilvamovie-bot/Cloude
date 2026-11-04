@@ -496,7 +496,11 @@ let hist = {}
 let unread = store.get('vzn-unread', {})
 const typingPeers = {}
 
-let vroom = null
+let vroom = null, vroomSince = 0
+const vact = {}
+const firstSeenInRoom = {}   // peerId -> quando apareceu na minha sala
+const screenWait = {}        // peerId -> {since, asked}
+const badConn = new Set()    // pessoas da sala sem conexão direta
 let localStream = null, camTrack = null, screenStream = null
 const remote = {}
 let focusKey = null      // null = automático, '__grid' = grade, ou chave do bloco
@@ -564,6 +568,14 @@ function connectLobby() {
     const prev = peers[peerId]
     peers[peerId] = {name: d.name.slice(0, 24), av: validAv(d.av), voice: VOICE_ROOMS.some(r => r.id === d.voice) ? d.voice : null, mic: !!d.mic, cam: !!d.cam, screen: !!d.screen, deaf: !!d.deaf}
     if (!prev) sysNote(`${peers[peerId].name} entrou no QG`)
+    const np = peers[peerId]
+    if (np.screen && (!prev || !prev.screen)) {
+      const room = VOICE_ROOMS.find(r => r.id === np.voice)
+      if (room) toast(me.voice === room.id
+        ? `🔴 ${np.name} começou a compartilhar a tela`
+        : `🔴 ${np.name} está compartilhando a tela em "${room.name}". Entre na sala para ver.`, 6000)
+      if (me.voice === room?.id && view.type === 'text') { view = {type: 'voice', id: room.id}; renderView() }
+    }
     if (me.voice && peers[peerId].voice === me.voice && (!prev || prev.voice !== me.voice)) beep(660)
     renderSide(); renderMembers(); if (me.voice) renderGrid(); refreshJoinScreen()
   }
@@ -648,7 +660,7 @@ function renderSide() {
     const on = view.type === 'voice' && view.id === r.id
     const inRoom = everyone().filter(p => p.voice === r.id)
     h += `<button class="ch ${on ? 'on' : ''}" data-t="voice" data-id="${r.id}"><span class="ico">🔊</span><span class="nm">${esc(r.name)}</span>${inRoom.length ? `<span class="cnt">${inRoom.length}</span>` : ''}</button>`
-    if (inRoom.length) h += '<div class="vmembers">' + inRoom.map(p => `<div class="vm" data-pid="${p.id}">${avatar(p, speaking.has(p.id) ? 'speak' : '')}<span>${esc(p.name)}</span><span class="flags">${p.screen ? '<span class="live">AO VIVO</span>' : ''}${p.cam ? '📷' : ''}${!p.mic ? '🔇' : ''}${p.deaf ? '🙉' : ''}</span></div>`).join('') + '</div>'
+    if (inRoom.length) h += '<div class="vmembers">' + inRoom.map(p => `<div class="vm" data-pid="${p.id}" data-room="${r.id}" style="cursor:pointer">${avatar(p, speaking.has(p.id) ? 'speak' : '')}<span>${esc(p.name)}</span><span class="flags">${p.screen ? '<span class="live">AO VIVO</span>' : ''}${p.cam ? '📷' : ''}${!p.mic ? '🔇' : ''}${p.deaf ? '🙉' : ''}</span></div>`).join('') + '</div>'
   }
   $('chanlist').innerHTML = h
   const vr = VOICE_ROOMS.find(r => r.id === me.voice)
@@ -728,8 +740,11 @@ function updateTitle() { const n = Object.values(unread).reduce((a, b) => a + b,
 
 /* ---------------- navegação ---------------- */
 $('chanlist').onclick = e => {
-  const b = e.target.closest('.ch'); if (!b) return
-  view = {type: b.dataset.t, id: b.dataset.id}
+  const vm = e.target.closest('.vm')
+  const b = e.target.closest('.ch')
+  if (vm) view = {type: 'voice', id: vm.dataset.room}
+  else if (b) view = {type: b.dataset.t, id: b.dataset.id}
+  else return
   closeDrawers(); renderView()
 }
 $('vjBtn').onclick = () => joinVoice(view.id)
@@ -764,6 +779,14 @@ async function joinVoice(roomId) {
   watchSpeaking(selfId, localStream)
 
   vroom = joinRoom(cfg, `voz-${wsKey}-${roomId}`)
+  vroomSince = Date.now()
+  // quem assiste pode pedir para a tela ser reenviada se ela não chegou
+  vact.rs = vroom.makeAction('rs')
+  vact.rs.onMessage = (_, {peerId}) => {
+    if (!screenStream) return
+    try { vroom.removeStream(screenStream, {target: peerId}) } catch {}
+    vroom.addStream(screenStream, {target: peerId, metadata: {k: 'screen'}})
+  }
   vroom.onPeerJoin = id => {
     vroom.addStream(localStream, {target: id})
     if (screenStream) vroom.addStream(screenStream, {target: id, metadata: {k: 'screen'}})
@@ -805,6 +828,8 @@ async function leaveVoice(switching) {
   vroom = null
   for (const id of Object.keys(remote)) dropRemote(id)
   analysers.clear(); speaking.clear(); focusKey = null
+  for (const o of [firstSeenInRoom, screenWait]) for (const k in o) delete o[k]
+  badConn.clear()
   $('grid').innerHTML = ''
   me.voice = null; me.cam = false; me.screen = false
   if (!switching) { beep(780); setTimeout(() => beep(520), 120); broadcastState(); renderView() }
@@ -826,12 +851,27 @@ async function toggleCam() {
 async function toggleScreen() {
   if (!me.voice) return toast('Entre numa sala primeiro')
   if (screenStream) return stopScreen()
-  if (!navigator.mediaDevices.getDisplayMedia) return toast('Este aparelho não compartilha tela. Use um computador.')
-  try { screenStream = await navigator.mediaDevices.getDisplayMedia({video: {frameRate: {ideal: 15}}, audio: true}) } catch { return }
+  if (!navigator.mediaDevices?.getDisplayMedia) return toast('Este aparelho não compartilha tela. Use um computador com Chrome ou Edge.', 6000)
+  const video = {frameRate: {ideal: 15, max: 30}, width: {max: 1920}, height: {max: 1080}}
+  try {
+    screenStream = await navigator.mediaDevices.getDisplayMedia({video, audio: true})
+  } catch (err) {
+    if (err?.name === 'NotAllowedError' || err?.name === 'AbortError') return explainScreenError(err)
+    // Firefox/Safari não aceitam áudio junto: tenta só o vídeo
+    try { screenStream = await navigator.mediaDevices.getDisplayMedia({video}) } catch (err2) { return explainScreenError(err2) }
+  }
+  if (!me.voice || !vroom) { screenStream.getTracks().forEach(t => t.stop()); screenStream = null; return }
   screenStream.getVideoTracks()[0].onended = () => stopScreen()
   vroom.addStream(screenStream, {metadata: {k: 'screen'}})
   me.screen = true; focusKey = selfId + ':screen'
   broadcastState(); renderGrid()
+}
+function explainScreenError(err) {
+  const mac = /Mac/i.test(navigator.platform || navigator.userAgent)
+  const n = err?.name || ''
+  if (n === 'NotAllowedError' && mac) toast('O Mac bloqueou a tela. Vá em Ajustes do Sistema → Privacidade e Segurança → Gravação de Tela, ative o Chrome/Edge, feche e abra o navegador de novo.', 12000)
+  else if (n === 'NotAllowedError' || n === 'AbortError') toast('Compartilhamento cancelado ou bloqueado pelo navegador. Clique de novo e escolha a tela, janela ou aba.', 7000)
+  else toast('Não consegui compartilhar a tela (' + (n || 'erro') + '). Tente pelo Chrome ou Edge no computador.', 8000)
 }
 function stopScreen(silent) {
   if (!screenStream) return
@@ -895,7 +935,9 @@ function renderGrid() {
       fig.style.display = t.screen ? 'none' : ''
       const src = avatarUrl(t.p.av, true); if (fig.getAttribute('src') !== src) fig.src = src
     }
-    el.querySelector('.tag').innerHTML = `${t.screen ? '<span class="live">AO VIVO</span>' : ''}${esc(t.p.name)}${t.p.id === selfId ? ' (você)' : ''}${t.screen && !t.track ? ' · carregando…' : ''}${!t.screen && !t.p.mic ? ' 🔇' : ''}`
+    const bad = badConn.has(t.p.id)
+    el.querySelector('.tag').innerHTML = `${t.screen ? '<span class="live">AO VIVO</span>' : ''}${esc(t.p.name)}${t.p.id === selfId ? ' (você)' : ''}${bad ? ' · ⚠️ sem conexão' : t.screen && !t.track ? ' · carregando…' : ''}${!t.screen && !t.p.mic ? ' 🔇' : ''}`
+    el.title = bad ? 'Não foi possível conectar direto com essa pessoa. Geralmente é firewall ou rede 4G/empresa bloqueando.' : ''
   }
   const hasFocus = tiles.some(t => t.key === fk)
   grid.classList.toggle('hasfocus', hasFocus)
@@ -906,6 +948,28 @@ function renderGrid() {
   renderMe()
 }
 addEventListener('resize', () => me.voice && renderGrid())
+
+/* vigia da sala: pede a tela de novo se não chegou e detecta conexão bloqueada */
+setInterval(() => {
+  if (!me.voice || !vroom) return
+  const now = Date.now()
+  let conns = {}
+  try { conns = vroom.getPeers() || {} } catch {}
+  let changed = false
+  for (const [id, p] of Object.entries(peers)) {
+    if (p.voice !== me.voice) { delete firstSeenInRoom[id]; delete screenWait[id]; if (badConn.delete(id)) changed = true; continue }
+    firstSeenInRoom[id] ||= now
+    const pc = conns[id]
+    const ok = pc && !['failed', 'closed'].includes(pc.connectionState)
+    const bad = !ok && now - Math.max(firstSeenInRoom[id], vroomSince) > 15000
+    if (bad !== badConn.has(id)) { bad ? badConn.add(id) : badConn.delete(id); changed = true }
+    if (p.screen && ok && !liveVideo(remote[id]?.screen)) {
+      const w = screenWait[id] ||= {since: now, asked: 0}
+      if (now - w.since > 4000 && now - w.asked > 6000) { w.asked = now; vact.rs?.send(1, {target: id}) }
+    } else delete screenWait[id]
+  }
+  if (changed) renderGrid()
+}, 2000)
 
 /* quem está falando (anel verde + bonequinho pulando) */
 function watchSpeaking(pid, stream) {
