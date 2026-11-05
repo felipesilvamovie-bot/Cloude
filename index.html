@@ -401,7 +401,7 @@ const VOICE_ROOMS = [
   {id: 'cafe',       name: 'Café ☕'},
 ]
 const APP_ID = 'vzn-qg-v1'
-const APP_VERSION = '8'          // aumente a cada atualização: avisa a equipe para recarregar
+const APP_VERSION = '9'          // aumente a cada atualização: avisa a equipe para recarregar
 const HISTORY_LIMIT = 300
 
 /* RETRANSMISSOR (TURN) — sem ele, pessoas em redes que bloqueiam conexão direta
@@ -598,6 +598,8 @@ const firstSeenInRoom = {}   // peerId -> quando apareceu na minha sala
 const screenWait = {}        // peerId -> {since, asked}
 const badConn = new Set()    // pessoas da sala sem conexão direta
 const viaRelay = new Set()   // pessoas conectadas pelo retransmissor (TURN)
+const fwd = new Map()        // o que eu repasso como ponte: 'de|para|tipo' -> {stream, sig, y}
+let lastLinksSig = ''
 let localStream = null, camTrack = null, screenStream = null
 const remote = {}
 let focusKey = null      // null = automático, '__grid' = grade, ou chave do bloco
@@ -691,20 +693,72 @@ function connectLobby() {
   act.typ = lobby.makeAction('typ')
 
   lobby.onPeerJoin = id => {
-    act.st.send(publicState(), {target: id})
+    act.st.send(myState(), {target: id})
+    // conta para quem chegou quem mais está online (inclusive quem ela não alcança direto)
+    for (const p of Object.values(peers)) if (p.raw && p.raw.o !== id) act.st.send(p.raw, {target: id})
     act.hist.send(historySnapshot(), {target: id})
   }
   lobby.onPeerLeave = id => {
-    const p = peers[id]
-    delete peers[id]; delete typingPeers[id]
-    if (p) sysNote(`${p.name} saiu ${MEET ? 'da reunião' : 'do QG'}`)
-    renderSide(); renderMembers(); renderTyping(); if (me.voice) renderGrid(); refreshJoinScreen()
+    // a conexão direta caiu; se a pessoa ainda estiver online por outro caminho, a ponte a mantém
+    if (peers[id]) peers[id].seen = Math.min(peers[id].seen, Date.now() - PRESENCE_TTL + 6000)
   }
-  act.st.onMessage = (d, {peerId}) => {
-    if (!d || typeof d.name !== 'string') return
-    const prev = peers[peerId]
-    peers[peerId] = {name: d.name.slice(0, 24), av: validAv(d.av), voice: VOICE_ROOMS.some(r => r.id === d.voice) ? d.voice : null, mic: !!d.mic, cam: !!d.cam, screen: !!d.screen, deaf: !!d.deaf}
-    if (!prev) sysNote(`${peers[peerId].name} entrou ${PLACE}`)
+  act.st.onMessage = (d, {peerId}) => handleState(d, peerId)
+  act.msg.onMessage = (m, {peerId}) => {
+    if (validMsg(m) && addMsg(m, true)) { delete typingPeers[peerId]; floodLobby(act.msg, m, peerId) }
+  }
+  act.hist.onMessage = snap => mergeHistory(snap)
+  act.typ.onMessage = (d, {peerId}) => {
+    if (!peers[peerId] || !d) return
+    typingPeers[peerId] = {name: peers[peerId].name, ch: d.ch, until: Date.now() + 4000}
+    renderTyping()
+  }
+}
+
+/* ---------------- ponte: presença e chat repassados por quem está no meio ----------------
+   Se A não consegue se conectar direto com C, mas os dois falam com B,
+   B repassa quem está online, as mensagens e (na sala de voz) o áudio e o vídeo. */
+const PRESENCE_TTL = 25000
+const recentGone = {}
+let mySeq = 0
+const myState = () => ({...publicState(), o: selfId, seq: mySeq})
+function floodLobby(action, d, from, origin) {
+  let t = []; try { t = Object.keys(lobby.getPeers()).filter(id => id !== from && id !== origin) } catch {}
+  if (t.length) action.send(d, {target: t})
+}
+function handleState(d, from) {
+  if (!d || typeof d.name !== 'string') return
+  const origin = typeof d.o === 'string' ? d.o : from
+  if (origin === selfId) return
+  const seq = typeof d.seq === 'number' ? d.seq : null
+  const prev = peers[origin]
+  if (prev && seq !== null && seq <= prev.seq) return          // já tenho essa versão (ou mais nova)
+  if (d.gone) { if (prev) { removePeer(origin, true); floodLobby(act.st, d, from, origin) } return }
+  peers[origin] = {name: d.name.slice(0, 24), av: validAv(d.av), voice: VOICE_ROOMS.some(r => r.id === d.voice) ? d.voice : null,
+    mic: !!d.mic, cam: !!d.cam, screen: !!d.screen, deaf: !!d.deaf,
+    links: Array.isArray(d.links) ? d.links.filter(x => typeof x === 'string').slice(0, 60) : [],
+    seq: seq ?? -1, seen: Date.now(), raw: {...d, o: origin}}
+  floodLobby(act.st, {...d, o: origin}, from, origin)
+  onPresence(origin, prev)
+}
+function removePeer(id, note) {
+  const p = peers[id]; if (!p) return
+  delete peers[id]; delete typingPeers[id]; recentGone[id] = Date.now()
+  if (remote[id]) dropRemote(id)
+  if (note) sysNote(`${p.name} saiu ${MEET ? 'da reunião' : 'do QG'}`)
+  renderSide(); renderMembers(); renderTyping(); if (me.voice) renderGrid(); refreshJoinScreen()
+}
+setInterval(() => {   // batimento: avisa que continua online e remove quem sumiu
+  if (!lobby) return
+  mySeq++; act.st.send(myState())
+}, 8000)
+setInterval(() => {
+  const now = Date.now()
+  for (const [id, p] of Object.entries(peers)) if (now - p.seen > PRESENCE_TTL) removePeer(id, true)
+}, 3000)
+
+function onPresence(peerId, prev) {
+  {
+    if (!prev && !(Date.now() - (recentGone[peerId] || 0) < 60000)) sysNote(`${peers[peerId].name} entrou ${PLACE}`)
     const np = peers[peerId]
     if (np.screen && (!prev || !prev.screen)) {
       const room = VOICE_ROOMS.find(r => r.id === np.voice)
@@ -716,16 +770,13 @@ function connectLobby() {
     if (me.voice && peers[peerId].voice === me.voice && (!prev || prev.voice !== me.voice)) beep(660)
     renderSide(); renderMembers(); if (me.voice) renderGrid(); refreshJoinScreen()
   }
-  act.msg.onMessage = (m, {peerId}) => { if (validMsg(m)) { delete typingPeers[peerId]; addMsg(m, true) } }
-  act.hist.onMessage = snap => mergeHistory(snap)
-  act.typ.onMessage = (d, {peerId}) => {
-    if (!peers[peerId] || !d) return
-    typingPeers[peerId] = {name: peers[peerId].name, ch: d.ch, until: Date.now() + 4000}
-    renderTyping()
-  }
 }
-const publicState = () => ({name: me.name, av: me.av, voice: me.voice, mic: me.mic, cam: me.cam, screen: me.screen, deaf: me.deaf})
-function broadcastState() { act.st?.send(publicState()); renderSide(); renderMembers(); renderMe() }
+// conexões diretas que tenho na sala de voz (os outros usam isso para escolher a ponte)
+function vlinks() {
+  try { return Object.entries(vroom?.getPeers() || {}).filter(([, pc]) => pc.connectionState === 'connected').map(([id]) => id).sort() } catch { return [] }
+}
+const publicState = () => ({name: me.name, av: me.av, voice: me.voice, mic: me.mic, cam: me.cam, screen: me.screen, deaf: me.deaf, links: me.voice ? vlinks() : []})
+function broadcastState() { mySeq++; act.st?.send(myState()); renderSide(); renderMembers(); renderMe() }
 const everyone = () => [{id: selfId, ...publicState()}, ...Object.entries(peers).map(([id, p]) => ({id, ...p}))]
 
 /* ---------------- chat ---------------- */
@@ -736,7 +787,7 @@ function validMsg(m) {
 const clean = m => ({id: m.id, ch: m.ch, text: m.text, ts: m.ts, name: m.name.slice(0, 24), av: validAv(m.av)})
 function addMsg(m, fromNet) {
   const list = hist[m.ch] ||= []
-  if (list.some(x => x.id === m.id)) return
+  if (list.some(x => x.id === m.id)) return false
   list.push(clean(m)); list.sort((a, b) => a.ts - b.ts)
   if (list.length > HISTORY_LIMIT) list.splice(0, list.length - HISTORY_LIMIT)
   saveHistory()
@@ -746,6 +797,7 @@ function addMsg(m, fromNet) {
     renderSide(); renderTyping(); updateTitle(); renderMeetBar()
   }
   if (chatCh() === m.ch) renderMsgs()
+  return true
 }
 let saveT
 function saveHistory() { clearTimeout(saveT); saveT = setTimeout(() => store.set(histKey, hist), 400) }
@@ -993,7 +1045,7 @@ async function joinVoice(roomId) {
   }
   txSetup()
   vroom.onPeerJoin = id => {
-    if (tx.on) vact.tx.send({on: true, by: tx.by, since: tx.since}, {target: id})
+    if (tx.on) vact.tx.send({on: true, by: tx.by, since: tx.since, id: uid(), o: selfId}, {target: id})
     vroom.addStream(localStream, {target: id})
     if (screenStream) vroom.addStream(screenStream, {target: id, metadata: {k: 'screen'}})
   }
@@ -1007,15 +1059,24 @@ async function joinVoice(roomId) {
   broadcastState(); renderView()
 }
 function gotStream(stream, id, meta) {
+  // vídeo/áudio de outra pessoa que chegou repassado pela ponte
+  const viaBridge = meta && meta.k === 'fwd' && typeof meta.f === 'string'
+  if (viaBridge) {
+    if (meta.f === selfId || !peers[meta.f]) return
+    const direct = remote[meta.f]
+    const kindF = meta.t === 'screen' ? 'screen' : 'cam'
+    if (direct && direct[kindF] && !direct[kindF + 'F'] && direct[kindF].getTracks().some(t => t.readyState === 'live')) return  // já tenho direto
+    id = meta.f; meta = {k: kindF === 'screen' ? 'screen' : 'cam'}
+  }
   const r = remote[id] ||= {}
   const kind = meta && meta.k === 'screen' ? 'screen' : 'cam'
-  r[kind] = stream
+  r[kind] = stream; r[kind + 'F'] = viaBridge
   const attr = kind === 'cam' ? 'data-pid' : 'data-spid'
   let a = document.querySelector(`audio[${attr}="${CSS.escape(id)}"]`)
   if (!a) { a = document.createElement('audio'); a.autoplay = true; a.setAttribute(attr, id); $('audios').appendChild(a) }
   if (a.srcObject !== stream) a.srcObject = stream
   a.muted = me.deaf; a.play?.().catch(() => {})
-  if (kind === 'cam' && !analysers.has(id)) watchSpeaking(id, stream)
+  if (kind === 'cam' && analysers.get(id)?.stream !== stream) watchSpeaking(id, stream)
   stream.onaddtrack = stream.onremovetrack = () => renderGrid()
   renderGrid()
 }
@@ -1036,7 +1097,7 @@ async function leaveVoice(switching) {
   for (const id of Object.keys(remote)) dropRemote(id)
   analysers.clear(); speaking.clear(); focusKey = null
   for (const o of [firstSeenInRoom, screenWait]) for (const k in o) delete o[k]
-  badConn.clear(); viaRelay.clear()
+  badConn.clear(); viaRelay.clear(); fwd.clear()
   $('grid').innerHTML = ''
   me.voice = null; me.cam = false; me.screen = false
   if (!switching) { beep(780); setTimeout(() => beep(520), 120); broadcastState(); renderView() }
@@ -1117,30 +1178,46 @@ $('vTx').onclick = () => {
    microfone (Chrome/Edge) e manda o texto para a sala, já com o nome. */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition
 const tx = {on: false, by: '', since: 0, lines: [], interim: {}, rec: null, want: false, lastInterim: 0, room: ''}
+// mensagens da sala de voz também passam pela ponte (cada uma só uma vez)
+const seenIds = new Set()
+function seenOnce(id) {
+  if (typeof id !== 'string' || seenIds.has(id)) return false
+  seenIds.add(id); if (seenIds.size > 3000) seenIds.delete(seenIds.values().next().value)
+  return true
+}
+function floodVoice(action, d, from) {
+  let t = []; try { t = Object.keys(vroom.getPeers()).filter(id => id !== from && id !== d.o) } catch {}
+  if (t.length) action.send(d, {target: t})
+}
+function vSend(action, d) { const m = {...d, id: uid(), o: selfId}; seenOnce(m.id); action.send(m) }
 function txSetup() {
   vact.tx = vroom.makeAction('tx')
   vact.tl = vroom.makeAction('tl')
-  vact.tx.onMessage = d => {
-    if (!d || typeof d.by !== 'string') return
+  vact.tx.onMessage = (d, {peerId}) => {
+    if (!d || typeof d.by !== 'string' || !seenOnce(d.id)) return
+    floodVoice(vact.tx, d, peerId)
     if (d.on) txStart(d.by.slice(0, 24), Number(d.since) || Date.now(), false)
     else txStop(d.by.slice(0, 24), false)
   }
   vact.tl.onMessage = (d, {peerId}) => {
-    if (!tx.on || !d || typeof d.text !== 'string') return
-    txLine(peerId, peers[peerId]?.name || '?', d.text.slice(0, 1000), !!d.final, typeof d.id === 'string' ? d.id : uid())
+    if (!d || typeof d.text !== 'string' || !seenOnce(d.id)) return
+    floodVoice(vact.tl, d, peerId)
+    if (!tx.on) return
+    const o = typeof d.o === 'string' && peers[d.o] ? d.o : peerId
+    txLine(o, peers[o]?.name || '?', d.text.slice(0, 1000), !!d.final, d.id)
   }
 }
 function txStart(by, since, local) {
   if (tx.on || !me.voice) return
   Object.assign(tx, {on: true, by, since, lines: [], interim: {}, room: VOICE_ROOMS.find(r => r.id === me.voice)?.name || ''})
-  if (local) { vact.tx.send({on: true, by, since}); toast('📝 Transcrição ligada. Todos na sala foram avisados.') }
+  if (local) { vSend(vact.tx, {on: true, by, since}); toast('📝 Transcrição ligada. Todos na sala foram avisados.') }
   else { toast(`📝 ${by} ligou a transcrição desta sala.`, 5000); beep(990) }
   recStart(); renderCaptions(); renderMe()
 }
 function txStop(by, local) {
   if (!tx.on) return
   recStop(); tx.on = false
-  if (local) vact.tx?.send({on: false, by})
+  if (local && vact.tx) vSend(vact.tx, {on: false, by})
   else toast(`📝 ${by} parou a transcrição.`)
   renderCaptions(); renderMe(); showTxDone()
 }
@@ -1155,10 +1232,10 @@ function recStart() {
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const text = e.results[i][0].transcript.trim(); if (!text) continue
       if (e.results[i].isFinal) {
-        const id = uid(); txLine(selfId, me.name, text, true, id); vact.tl?.send({text, final: true, id})
+        const id = uid(); txLine(selfId, me.name, text, true, id); if (vact.tl) { seenOnce(id); vact.tl.send({text, final: true, id, o: selfId}) }
       } else {
         txLine(selfId, me.name, text, false)
-        if (Date.now() - tx.lastInterim > 700) { tx.lastInterim = Date.now(); vact.tl?.send({text, final: false}) }
+        if (Date.now() - tx.lastInterim > 700) { tx.lastInterim = Date.now(); if (vact.tl) vSend(vact.tl, {text, final: false}) }
       }
     }
   }
@@ -1224,7 +1301,10 @@ function showTxDone() {
   }
   document.body.appendChild(box)
 }
-addEventListener('beforeunload', () => { try { vroom?.leave(); lobby?.leave() } catch {} })
+addEventListener('beforeunload', () => {
+  try { mySeq++; act.st?.send({...publicState(), o: selfId, seq: mySeq, gone: true}) } catch {}
+  try { vroom?.leave(); lobby?.leave() } catch {}
+})
 
 const liveVideo = s => s?.getVideoTracks().filter(t => t.readyState === 'live').pop() || null
 function renderGrid() {
@@ -1261,7 +1341,7 @@ function renderGrid() {
       const src = avatarUrl(t.p.av, true); if (fig.getAttribute('src') !== src) fig.src = src
     }
     const bad = badConn.has(t.p.id)
-    el.querySelector('.tag').innerHTML = `${t.screen ? '<span class="live">AO VIVO</span>' : ''}${esc(t.p.name)}${t.p.id === selfId ? ' (você)' : ''}${viaRelay.has(t.p.id) ? ' <span title="Conectado pelo retransmissor">🛰️</span>' : ''}${bad ? ' · ⚠️ sem conexão' : t.screen && !t.track ? ' · carregando…' : ''}${!t.screen && !t.p.mic ? ' 🔇' : ''}`
+    el.querySelector('.tag').innerHTML = `${t.screen ? '<span class="live">AO VIVO</span>' : ''}${esc(t.p.name)}${t.p.id === selfId ? ' (você)' : ''}${viaRelay.has(t.p.id) ? ' <span title="Conectado pelo retransmissor">🛰️</span>' : ''}${t.p.id !== selfId && remote[t.p.id]?.[t.screen ? 'screenF' : 'camF'] ? ' <span title="Chegando pela ponte (outra pessoa da sala está repassando)">🔁</span>' : ''}${bad ? ' · ⚠️ sem conexão' : t.screen && !t.track ? ' · carregando…' : ''}${!t.screen && !t.p.mic ? ' 🔇' : ''}`
     el.title = bad ? 'Não foi possível conectar direto com essa pessoa. Geralmente é firewall ou rede 4G/empresa bloqueando.' : ''
   }
   const hasFocus = tiles.some(t => t.key === fk)
@@ -1293,11 +1373,12 @@ setInterval(() => {
   try { conns = vroom.getPeers() || {} } catch {}
   let changed = false
   for (const [id, p] of Object.entries(peers)) {
-    if (p.voice !== me.voice) { delete firstSeenInRoom[id]; delete screenWait[id]; if (badConn.delete(id)) changed = true; continue }
+    if (p.voice !== me.voice) { delete firstSeenInRoom[id]; delete screenWait[id]; if (badConn.delete(id)) changed = true; if (remote[id] && !conns[id]) dropRemote(id); continue }
     firstSeenInRoom[id] ||= now
     const pc = conns[id]
     const ok = pc && !['failed', 'closed'].includes(pc.connectionState)
-    const bad = !ok && now - Math.max(firstSeenInRoom[id], vroomSince) > 15000
+    const bridged = remote[id]?.camF && remote[id].cam?.getTracks().some(t => t.readyState === 'live')
+    const bad = !ok && !bridged && now - Math.max(firstSeenInRoom[id], vroomSince) > 15000
     if (bad !== badConn.has(id)) { bad ? badConn.add(id) : badConn.delete(id); changed = true }
     if (p.screen && ok && !liveVideo(remote[id]?.screen)) {
       const w = screenWait[id] ||= {since: now, asked: 0}
@@ -1305,6 +1386,9 @@ setInterval(() => {
     } else delete screenWait[id]
   }
   if (changed) renderGrid()
+  // avisa os outros quando minhas conexões diretas mudam (eles usam isso para escolher a ponte)
+  const ls = vlinks().join(','); if (ls !== lastLinksSig) { lastLinksSig = ls; broadcastState() }
+  bridgeTick(now)
   // descobre quem está passando pelo retransmissor (para conferência)
   for (const [id, pc] of Object.entries(conns)) {
     pc.getStats?.().then(st => {
@@ -1326,13 +1410,45 @@ setInterval(() => {
   })
 }, 2000)
 
+/* ponte de mídia: se X e Y estão na minha sala, eu falo com os dois, mas eles não se
+   conectam entre si, eu repasso o áudio/vídeo/tela de um para o outro.
+   Para não duplicar, só a pessoa de menor id entre as possíveis pontes faz isso. */
+function bridgeTick(now) {
+  if (!vroom) return
+  const mine = new Set(vlinks())
+  const room = Object.keys(peers).filter(id => peers[id].voice === me.voice)
+  const linked = (a, b) => a === selfId ? mine.has(b) : b === selfId ? mine.has(a) : (peers[a]?.links || []).includes(b) || (peers[b]?.links || []).includes(a)
+  const want = new Map()
+  for (const x of room) for (const y of room) {
+    if (x === y || !mine.has(x) || !mine.has(y) || linked(x, y)) continue
+    if (now - (firstSeenInRoom[x] || now) < 6000 || now - (firstSeenInRoom[y] || now) < 6000) continue
+    const bridge = [selfId, ...room.filter(r => r !== x && r !== y && linked(r, x) && linked(r, y))].sort()[0]
+    if (bridge !== selfId) continue
+    for (const kind of ['cam', 'screen']) {
+      const s = remote[x]?.[kind]
+      if (!s || remote[x][kind + 'F']) continue                       // só repasso o que recebi direto
+      const sig = s.getTracks().filter(t => t.readyState === 'live').map(t => t.id).sort().join(',')
+      if (sig) want.set(`${x}|${y}|${kind}`, {stream: s, sig, x, y, kind})
+    }
+  }
+  for (const [key, f] of fwd) {
+    const w = want.get(key)
+    if (!w || w.sig !== f.sig || w.stream !== f.stream) { try { vroom.removeStream(f.wrap, {target: f.y}) } catch {} fwd.delete(key) }
+  }
+  for (const [key, w] of want) if (!fwd.has(key)) {
+    // embrulho novo a cada envio: quem recebe não confunde com um envio antigo que já parou
+    w.wrap = new MediaStream(w.stream.getTracks().filter(t => t.readyState === 'live'))
+    try { vroom.addStream(w.wrap, {target: w.y, metadata: {k: 'fwd', f: w.x, t: w.kind}}); fwd.set(key, w) } catch {}
+  }
+}
+
 /* quem está falando (anel verde + bonequinho pulando) */
 function watchSpeaking(pid, stream) {
   if (!audioCtx || !stream.getAudioTracks().length) return
   try {
     const src = audioCtx.createMediaStreamSource(stream)
     const an = audioCtx.createAnalyser(); an.fftSize = 512; src.connect(an)
-    analysers.set(pid, {an, buf: new Uint8Array(an.fftSize)})
+    analysers.set(pid, {an, buf: new Uint8Array(an.fftSize), stream})
   } catch {}
 }
 setInterval(() => {
