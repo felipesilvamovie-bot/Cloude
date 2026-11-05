@@ -178,6 +178,31 @@ input,textarea{font:inherit;color:var(--tx)}
 .ver{font-size:10px;color:var(--tx3);text-align:center;padding:2px 0 4px;background:#100b0a}
 #updbar{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:70;background:var(--fire);color:#1a0905;font-weight:800;padding:10px 14px;border-radius:12px;box-shadow:0 8px 30px #000a;display:flex;gap:10px;align-items:center}
 #updbar button{background:#1a0905;color:#ffd23f;border-radius:8px;padding:6px 12px;font-weight:800}
+/* ---------- reunião externa (link privado) ---------- */
+.meet-only{display:none!important}
+body.meet .meet-only{display:inline-flex!important}
+body.meet #rail,body.meet #side,body.meet #members,body.meet #menuBtn,body.meet #membersBtn,body.meet .qg-only{display:none!important}
+body.meet #app{grid-template-columns:1fr!important}
+body.meet #chat{position:fixed;right:0;top:56px;bottom:0;width:min(360px,100%);z-index:25;background:var(--bg1);border-left:1px solid var(--line);box-shadow:-10px 0 40px #0008}
+body.meet .welcome .big{width:48px;height:48px;font-size:24px;border-radius:14px}
+body.meet .welcome h2{font-size:20px}
+.mbtn{align-items:center;gap:6px;padding:7px 12px;border-radius:10px;border:1px solid var(--line);color:var(--tx);font-size:13px;font-weight:700;background:var(--bg3)}
+.mbtn:hover{background:var(--bg4)}
+.mbtn.on{border-color:var(--fire2);color:var(--fire1)}
+.mbtn.fire{background:var(--fire);color:#1a0905;border-color:transparent}
+.mbtn .badge{background:var(--fire3);color:#fff;font-size:11px;border-radius:9px;padding:0 6px}
+.newmeet{margin-top:14px;border:1px dashed #ff8a1f77;color:var(--fire1)!important;justify-content:center;font-weight:700}
+.newmeet:hover{background:#ff8a1f1a!important}
+#meetModal{position:fixed;inset:0;z-index:66;background:#000b;display:grid;place-items:center;padding:16px}
+#meetModal .box{background:var(--bg2);border:1px solid #ff8a1f55;border-radius:16px;padding:22px;max-width:520px;width:100%;box-shadow:0 20px 60px #000c}
+#meetModal h3{margin:0 0 4px;font-size:20px}
+#meetModal p{margin:0 0 14px;color:var(--tx2);font-size:14px}
+#meetModal label{display:block;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--tx2);margin:0 0 6px}
+#meetModal .linkrow{display:flex;gap:8px;margin:14px 0}
+#meetModal .linkrow input{flex:1;min-width:0;font-size:13px}
+#meetModal .acts{display:flex;gap:8px;flex-wrap:wrap}
+#meetModal .ghost{border:1px solid var(--line);border-radius:10px;padding:11px 14px;color:var(--tx2)}
+@media (max-width:720px){ .mbtn .tl{display:none} body.meet #chat{top:56px;width:100%} }
 /* transcrição */
 #captions{flex:none;background:#0d0908;border-top:1px solid #3a1a12;padding:8px 16px 10px;max-height:150px;overflow:hidden}
 #captions .txbadge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:800;letter-spacing:.06em;color:#ffb23f;text-transform:uppercase;margin-bottom:4px}
@@ -320,6 +345,9 @@ input,textarea{font:inherit;color:var(--tx)}
       <button class="ibtn" id="menuBtn" title="Canais">☰</button>
       <span class="ico" id="tIco">#</span><span id="tName"></span><span class="desc" id="tDesc"></span>
       <span class="sp"></span>
+      <button class="mbtn meet-only" id="mPeople" title="Pessoas na reunião">👥 <span id="mCount">1</span></button>
+      <button class="mbtn meet-only" id="mChat" title="Chat da reunião">💬 <span class="tl">Chat</span><span class="badge hidden" id="mBadge"></span></button>
+      <button class="mbtn meet-only fire" id="mLink" title="Copiar link da reunião">🔗 <span class="tl">Copiar link</span></button>
       <button class="ibtn" id="membersBtn" title="Quem está online">👥</button>
     </div>
 
@@ -373,9 +401,31 @@ const VOICE_ROOMS = [
   {id: 'cafe',       name: 'Café ☕'},
 ]
 const APP_ID = 'vzn-qg-v1'
-const APP_VERSION = '6'           // aumente a cada atualização: avisa a equipe para recarregar
+const APP_VERSION = '7'          // aumente a cada atualização: avisa a equipe para recarregar
 const HISTORY_LIMIT = 300
 /* ===================================================================== */
+
+/* Modo REUNIÃO EXTERNA: o link "…/#m=<código>&t=<nome>" abre só a sala de
+   reunião, sem senha e sem nada do QG interno. O código aleatório é a chave:
+   só entra quem tem o link. */
+const MEET = (() => {
+  const m = location.hash.match(/[#&]m=([a-z0-9]{8,40})/i)
+  if (!m) return null
+  let title = ''
+  try { title = decodeURIComponent((location.hash.match(/[#&]t=([^&]*)/) || [])[1] || '').trim().slice(0, 60) } catch {}
+  return {id: m[1].toLowerCase(), title}
+})()
+if (MEET) {
+  TEXT_CHANNELS.splice(0, TEXT_CHANNELS.length, {id: 'chat', name: 'chat da reunião', desc: 'Mensagens desta reunião'})
+  VOICE_ROOMS.splice(0, VOICE_ROOMS.length, {id: 'reuniao', name: MEET.title || 'Reunião VZN'})
+  document.body.classList.add('meet')
+}
+const PLACE = MEET ? 'na reunião' : 'no QG'
+let meetChatOpen = false
+// canal de texto que está visível agora (na reunião o chat é um painel lateral)
+const chatCh = () => MEET ? (meetChatOpen ? 'chat' : null) : (view.type === 'text' ? view.id : null)
+function newMeetId() { const b = crypto.getRandomValues(new Uint8Array(12)); return [...b].map(x => (x % 36).toString(36)).join('') }
+function meetLink(id, title) { return location.origin + location.pathname + '#m=' + id + (title ? '&t=' + encodeURIComponent(title) : '') }
 
 /* ---------------- bonequinhos pixel (estilo blocos) ---------------- */
 // h: cabelo  s: pele  e: olhos  sh: camisa  p: calça  b: sapato  style: penteado/acessório
@@ -559,8 +609,23 @@ $('inName').oninput = drawPicker
 $('inName').value = store.get('vzn-name', '')
 drawPicker()
 
+if (MEET) {
+  // convidado: sem senha, com o nome da reunião
+  $('inPass').required = false
+  $('inPass').previousElementSibling.classList.add('hidden'); $('inPass').classList.add('hidden')
+  document.querySelector('.brand .tag').textContent = 'Convite para reunião'
+  document.querySelector('label[for="inName"]').textContent = 'Seu nome'
+  $('loginForm').querySelector('button[type=submit]').textContent = 'ENTRAR NA REUNIÃO 🔥'
+  const t = document.createElement('div')
+  t.style.cssText = 'text-align:center;font-size:20px;font-weight:800;margin:-4px 0 18px'
+  t.textContent = MEET.title || 'Reunião VZN'
+  $('loginForm').prepend(t)
+  document.querySelector('.foot').textContent = 'Sem cadastro e sem instalar nada · funciona melhor no Chrome ou Edge'
+  document.title = (MEET.title || 'Reunião') + ' · VZN'
+}
 $('loginForm').onsubmit = e => {
   e.preventDefault()
+  if (MEET) return start($('inName').value.trim(), pickAv)
   const pass = $('inPass').value.trim().toLowerCase()
   if (pass !== PASSWORD) {
     $('err').textContent = 'Senha incorreta. Pede a senha pra alguém da VZN.'
@@ -569,18 +634,29 @@ $('loginForm').onsubmit = e => {
   }
   start($('inName').value.trim(), pickAv)
 }
-if (store.get('vzn-ok', false) && store.get('vzn-name', '')) start(store.get('vzn-name'), pickAv)
+if (!MEET && store.get('vzn-ok', false) && store.get('vzn-name', '')) start(store.get('vzn-name'), pickAv)
+addEventListener('hashchange', () => { if (/[#&]m=/.test(location.hash) !== !!MEET || (MEET && !location.hash.includes(MEET.id))) location.reload() })
 
+let histKey = 'vzn-hist'
 async function start(name, av) {
   if (!name) return toast('Digite seu nome')
   me.name = name.slice(0, 24); me.av = validAv(av)
-  store.set('vzn-name', me.name); store.set('vzn-av', me.av); store.set('vzn-ok', true)
-  wsKey = await sha('vzn-agencia|' + PASSWORD)
-  cfg = {appId: APP_ID, password: 'vzn-agencia-qg|' + PASSWORD}
-  hist = store.get('vzn-hist', {})
+  store.set('vzn-name', me.name); store.set('vzn-av', me.av)
+  if (MEET) {
+    wsKey = await sha('vzn-meet|' + MEET.id)
+    cfg = {appId: APP_ID, password: 'vzn-meet|' + MEET.id}
+    histKey = 'vzn-meet-' + MEET.id
+    view = {type: 'voice', id: 'reuniao'}
+  } else {
+    store.set('vzn-ok', true)
+    wsKey = await sha('vzn-agencia|' + PASSWORD)
+    cfg = {appId: APP_ID, password: 'vzn-agencia-qg|' + PASSWORD}
+  }
+  hist = store.get(histKey, {})
   $('login').classList.add('hidden'); $('app').classList.remove('hidden')
   connectLobby()
   renderAll()
+  if (MEET) joinVoice('reuniao')
 }
 
 /* ---------------- lobby (presença + chat) ---------------- */
@@ -598,14 +674,14 @@ function connectLobby() {
   lobby.onPeerLeave = id => {
     const p = peers[id]
     delete peers[id]; delete typingPeers[id]
-    if (p) sysNote(`${p.name} saiu do QG`)
+    if (p) sysNote(`${p.name} saiu ${MEET ? 'da reunião' : 'do QG'}`)
     renderSide(); renderMembers(); renderTyping(); if (me.voice) renderGrid(); refreshJoinScreen()
   }
   act.st.onMessage = (d, {peerId}) => {
     if (!d || typeof d.name !== 'string') return
     const prev = peers[peerId]
     peers[peerId] = {name: d.name.slice(0, 24), av: validAv(d.av), voice: VOICE_ROOMS.some(r => r.id === d.voice) ? d.voice : null, mic: !!d.mic, cam: !!d.cam, screen: !!d.screen, deaf: !!d.deaf}
-    if (!prev) sysNote(`${peers[peerId].name} entrou no QG`)
+    if (!prev) sysNote(`${peers[peerId].name} entrou ${PLACE}`)
     const np = peers[peerId]
     if (np.screen && (!prev || !prev.screen)) {
       const room = VOICE_ROOMS.find(r => r.id === np.voice)
@@ -642,14 +718,14 @@ function addMsg(m, fromNet) {
   if (list.length > HISTORY_LIMIT) list.splice(0, list.length - HISTORY_LIMIT)
   saveHistory()
   if (fromNet) {
-    const viewing = view.type === 'text' && view.id === m.ch && !document.hidden
-    if (!viewing) { unread[m.ch] = (unread[m.ch] || 0) + 1; store.set('vzn-unread', unread); beep(880, .05) }
-    renderSide(); renderTyping(); updateTitle()
+    const viewing = chatCh() === m.ch && !document.hidden
+    if (!viewing) { unread[m.ch] = (unread[m.ch] || 0) + 1; if (!MEET) store.set('vzn-unread', unread); beep(880, .05) }
+    renderSide(); renderTyping(); updateTitle(); renderMeetBar()
   }
-  if (view.type === 'text' && view.id === m.ch) renderMsgs()
+  if (chatCh() === m.ch) renderMsgs()
 }
 let saveT
-function saveHistory() { clearTimeout(saveT); saveT = setTimeout(() => store.set('vzn-hist', hist), 400) }
+function saveHistory() { clearTimeout(saveT); saveT = setTimeout(() => store.set(histKey, hist), 400) }
 function historySnapshot() { const s = {}; for (const c of TEXT_CHANNELS) s[c.id] = (hist[c.id] || []).slice(-150); return s }
 function mergeHistory(snap) {
   if (!snap || typeof snap !== 'object') return
@@ -662,10 +738,10 @@ function mergeHistory(snap) {
     list.sort((a, b) => a.ts - b.ts)
     if (list.length > HISTORY_LIMIT) list.splice(0, list.length - HISTORY_LIMIT)
   }
-  if (changed) { saveHistory(); if (view.type === 'text') renderMsgs() }
+  if (changed) { saveHistory(); if (chatCh()) renderMsgs() }
 }
 function sysNote(t) {
-  if (view.type !== 'text') return
+  if (!chatCh()) return
   const el = document.createElement('div'); el.className = 'sysmsg'; el.textContent = '🔥 ' + t
   const box = $('msgs'); const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80
   box.appendChild(el); if (atBottom) box.scrollTop = box.scrollHeight
@@ -675,12 +751,12 @@ $('sendForm').onsubmit = e => { e.preventDefault(); sendMsg() }
 let lastTyp = 0
 $('inMsg').addEventListener('input', e => {
   const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 200) + 'px'
-  if (Date.now() - lastTyp > 2500 && t.value) { lastTyp = Date.now(); act.typ?.send({ch: view.id}) }
+  if (Date.now() - lastTyp > 2500 && t.value && chatCh()) { lastTyp = Date.now(); act.typ?.send({ch: chatCh()}) }
 })
 function sendMsg() {
-  const t = $('inMsg'); const text = t.value.trim()
-  if (!text || view.type !== 'text') return
-  const m = {id: uid(), ch: view.id, text: text.slice(0, 4000), ts: Date.now(), name: me.name, av: me.av}
+  const t = $('inMsg'); const text = t.value.trim(), ch = chatCh()
+  if (!text || !ch) return
+  const m = {id: uid(), ch, text: text.slice(0, 4000), ts: Date.now(), name: me.name, av: me.av}
   addMsg(m, false); act.msg.send(m)
   t.value = ''; t.style.height = 'auto'; lastTyp = 0; t.focus()
 }
@@ -700,6 +776,7 @@ function renderSide() {
     h += `<button class="ch ${on ? 'on' : ''}" data-t="voice" data-id="${r.id}"><span class="ico">🔊</span><span class="nm">${esc(r.name)}</span>${inRoom.length ? `<span class="cnt">${inRoom.length}</span>` : ''}</button>`
     if (inRoom.length) h += '<div class="vmembers">' + inRoom.map(p => `<div class="vm" data-pid="${p.id}" data-room="${r.id}" style="cursor:pointer">${avatar(p, speaking.has(p.id) ? 'speak' : '')}<span>${esc(p.name)}</span><span class="flags">${p.screen ? '<span class="live">AO VIVO</span>' : ''}${p.cam ? '📷' : ''}${!p.mic ? '🔇' : ''}${p.deaf ? '🙉' : ''}</span></div>`).join('') + '</div>'
   }
+  h += '<button class="ch newmeet" data-t="newmeet">🔗 Criar reunião externa</button>'
   $('chanlist').innerHTML = h
   const vr = VOICE_ROOMS.find(r => r.id === me.voice)
   $('vpanel').classList.toggle('hidden', !vr)
@@ -714,6 +791,14 @@ function renderMembers() {
     h += `<div class="mem">${avatar(p)}<div class="info"><b style="color:${nameColor(p)}">${esc(p.name)}${p.id === selfId ? ' (você)' : ''}</b><span>${esc(st)}</span></div></div>`
   }
   $('members').innerHTML = h
+  renderMeetBar()
+}
+function renderMeetBar() {
+  if (!MEET) return
+  $('mCount').textContent = everyone().filter(p => p.voice).length || 1
+  const n = unread.chat || 0
+  $('mBadge').textContent = n; $('mBadge').classList.toggle('hidden', !n || meetChatOpen)
+  $('mChat').classList.toggle('on', meetChatOpen)
 }
 function renderMe() {
   $('meAv').innerHTML = `<img src="${avatarUrl(me.av)}" alt="">`
@@ -735,6 +820,19 @@ function setTg(id, state, label) {
   b.title = label
 }
 function renderView() {
+  if (MEET) {
+    view = {type: 'voice', id: 'reuniao'}
+    $('voice').classList.remove('hidden')
+    $('chat').classList.toggle('hidden', !meetChatOpen)
+    $('tIco').textContent = '📹'; $('tName').textContent = VOICE_ROOMS[0].name; $('tDesc').textContent = 'Reunião VZN · link privado'
+    const inside = me.voice === 'reuniao'
+    $('vjoin').classList.toggle('hidden', inside)
+    $('grid').classList.toggle('hidden', !inside); $('vbar').classList.toggle('hidden', !inside)
+    if (inside) renderGrid(); else refreshJoinScreen()
+    if (meetChatOpen) { $('inMsg').placeholder = 'Mensagem para a reunião'; unread.chat = 0; renderMsgs(); renderTyping() }
+    renderMeetBar(); updateTitle()
+    return
+  }
   const isText = view.type === 'text'
   $('chat').classList.toggle('hidden', !isText)
   $('voice').classList.toggle('hidden', isText)
@@ -760,11 +858,12 @@ function refreshJoinScreen() {
   const n = everyone().filter(p => p.voice === r.id)
   $('vjFigs').innerHTML = n.slice(0, 6).map(p => `<img src="${avatarUrl(p.av, true)}" title="${esc(p.name)}" alt="">`).join('') || `<img src="${avatarUrl(me.av, true)}" style="opacity:.35" alt="">`
   $('vjTitle').textContent = r.name
-  $('vjSub').textContent = n.length ? `Na sala agora: ${n.map(p => p.name).join(', ')}` : 'Ninguém aqui ainda. Entra e espera a equipe chegar.'
-  $('vjBtn').textContent = me.voice ? 'Mudar para esta sala' : 'Entrar na sala'
+  $('vjSub').textContent = n.length ? `Na sala agora: ${n.map(p => p.name).join(', ')}` : MEET ? 'Você saiu da reunião.' : 'Ninguém aqui ainda. Entra e espera a equipe chegar.'
+  $('vjBtn').textContent = MEET ? 'Voltar para a reunião' : me.voice ? 'Mudar para esta sala' : 'Entrar na sala'
 }
 function renderMsgs() {
-  const c = TEXT_CHANNELS.find(x => x.id === view.id)
+  const c = TEXT_CHANNELS.find(x => x.id === chatCh())
+  if (!c) return
   const list = hist[c.id] || []
   let h = `<div class="welcome"><div class="big">#</div><h2>Bem-vindo(a) a #${esc(c.name)}</h2><p>${esc(c.desc)}.</p></div>`
   let prev = null, prevDay = ''
@@ -780,16 +879,20 @@ function renderMsgs() {
 }
 function renderTyping() {
   const now = Date.now()
-  const names = Object.values(typingPeers).filter(t => t.until > now && t.ch === view.id && view.type === 'text').map(t => t.name)
+  const names = Object.values(typingPeers).filter(t => t.until > now && t.ch === chatCh()).map(t => t.name)
   $('typing').textContent = names.length ? `${names.join(', ')} ${names.length > 1 ? 'estão' : 'está'} digitando…` : ''
 }
 setInterval(renderTyping, 1500)
-function updateTitle() { const n = Object.values(unread).reduce((a, b) => a + b, 0); document.title = (n ? `(${n}) ` : '') + 'VZN QG' }
+function updateTitle() {
+  const n = MEET ? (unread.chat || 0) : Object.values(unread).reduce((a, b) => a + b, 0)
+  document.title = (n ? `(${n}) ` : '') + (MEET ? VOICE_ROOMS[0].name + ' · VZN' : 'VZN QG')
+}
 
 /* ---------------- navegação ---------------- */
 $('chanlist').onclick = e => {
   const vm = e.target.closest('.vm')
   const b = e.target.closest('.ch')
+  if (b?.dataset.t === 'newmeet') return openMeetModal()
   if (vm) view = {type: 'voice', id: vm.dataset.room}
   else if (b) view = {type: b.dataset.t, id: b.dataset.id}
   else return
@@ -800,7 +903,37 @@ $('menuBtn').onclick = () => { $('side').classList.add('open'); $('overlay').cla
 $('membersBtn').onclick = () => { $('members').classList.add('open'); $('overlay').classList.add('open') }
 $('overlay').onclick = closeDrawers
 function closeDrawers() { $('side').classList.remove('open'); $('members').classList.remove('open'); $('overlay').classList.remove('open') }
-document.addEventListener('visibilitychange', () => { if (!document.hidden && view.type === 'text') { unread[view.id] = 0; store.set('vzn-unread', unread); renderSide(); updateTitle() } })
+document.addEventListener('visibilitychange', () => { const ch = chatCh(); if (!document.hidden && ch) { unread[ch] = 0; if (!MEET) store.set('vzn-unread', unread); renderSide(); updateTitle(); renderMeetBar() } })
+
+/* ---------------- reunião externa ---------------- */
+$('mChat').onclick = () => { meetChatOpen = !meetChatOpen; renderView(); if (meetChatOpen) $('inMsg').focus() }
+$('mLink').onclick = () => copyText(location.href, 'Link da reunião copiado! Mande para quem vai participar.')
+$('mPeople').onclick = () => toast('Na reunião: ' + everyone().filter(p => p.voice).map(p => p.name).join(', '), 5000)
+async function copyText(text, msg) {
+  try { await navigator.clipboard.writeText(text); toast(msg) } catch { prompt('Copie o link:', text) }
+}
+function openMeetModal() {
+  closeDrawers()
+  document.getElementById('meetModal')?.remove()
+  const id = newMeetId()
+  const box = document.createElement('div'); box.id = 'meetModal'
+  box.innerHTML = `<div class="box"><h3>🔗 Nova reunião externa</h3>
+    <p>Gere um link único para clientes e parceiros. Quem abrir entra direto na sala de reunião, sem senha e sem ver nada do QG.</p>
+    <label for="mtTitle">Nome da reunião (opcional)</label>
+    <input class="field" id="mtTitle" maxlength="60" placeholder="Ex.: Reunião com Foxtrot">
+    <div class="linkrow"><input class="field" id="mtLink" readonly><button class="btn" data-a="copy">Copiar</button></div>
+    <div class="acts"><button class="btn" data-a="open">Entrar agora</button><button class="ghost" data-a="close">Fechar</button></div></div>`
+  const upd = () => { box.querySelector('#mtLink').value = meetLink(id, box.querySelector('#mtTitle').value.trim()) }
+  box.querySelector('#mtTitle').oninput = upd; upd()
+  box.onclick = e => {
+    const a = e.target.dataset?.a, link = box.querySelector('#mtLink').value
+    if (e.target === box || a === 'close') return box.remove()
+    if (a === 'copy') copyText(link, 'Link copiado! Cada link abre uma sala só daquela reunião.')
+    if (a === 'open') { window.open(link, '_blank', 'noopener'); box.remove() }
+  }
+  document.body.appendChild(box)
+  box.querySelector('#mtTitle').focus()
+}
 $('inviteBtn').onclick = async () => {
   const link = location.origin + location.pathname
   try { await navigator.clipboard.writeText(link); toast('Link do QG copiado! A senha é a mesma de sempre.') }
@@ -1197,7 +1330,7 @@ async function checkUpdate() {
     if (v && v !== APP_VERSION && !$('updbar')) {
       const bar = document.createElement('div'); bar.id = 'updbar'
       bar.innerHTML = '🔥 Nova versão do VZN QG disponível <button>Atualizar agora</button>'
-      bar.querySelector('button').onclick = () => { location.href = location.pathname + '?v=' + encodeURIComponent(v) }
+      bar.querySelector('button').onclick = () => { location.href = location.pathname + '?v=' + encodeURIComponent(v) + location.hash }
       document.body.appendChild(bar)
     }
   } catch {}
