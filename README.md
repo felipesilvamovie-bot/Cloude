@@ -17,7 +17,13 @@ Chat por canais, salas de voz, câmera e compartilhamento de tela, no estilo Dis
   Dá para espalhar a equipe pelas 5 salas.
 - O histórico do chat fica salvo nos computadores de quem usa e é sincronizado quando alguém entra.
   Mensagens mandadas quando você estava offline chegam se alguém que as recebeu estiver online.
-- Em redes com firewall muito fechado a conexão direta pode falhar.
+- Em redes com firewall muito fechado a conexão direta entre duas pessoas pode falhar.
+  Quando isso acontece e existe uma terceira pessoa na sala que fala com as duas, ela vira
+  uma **ponte automática** (aparece 🔁 no quadro): presença, chat, transcrição, áudio, câmera
+  e tela são repassados por ela. Com só duas pessoas e rede bloqueada, aparece "⚠️ sem conexão";
+  nesse caso só um retransmissor TURN resolve (veja `TURN` no topo do script em `index.html`).
+- Reuniões externas: no QG, clique em "🔗 Criar reunião externa" para gerar um link único.
+  Quem abre entra direto na sala, sem senha e sem ver nada do QG.
 - Compartilhar a tela funciona no computador (Chrome, Edge, Firefox). No celular dá para usar chat, voz e câmera.
 
 ## Personalizar
