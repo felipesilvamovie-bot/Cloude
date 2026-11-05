@@ -401,8 +401,16 @@ const VOICE_ROOMS = [
   {id: 'cafe',       name: 'Café ☕'},
 ]
 const APP_ID = 'vzn-qg-v1'
-const APP_VERSION = '7'          // aumente a cada atualização: avisa a equipe para recarregar
+const APP_VERSION = '8'          // aumente a cada atualização: avisa a equipe para recarregar
 const HISTORY_LIMIT = 300
+
+/* RETRANSMISSOR (TURN) — sem ele, pessoas em redes que bloqueiam conexão direta
+   (4G, fibra com CGNAT, firewall de empresa) não se enxergam.
+   Conta grátis em metered.ca → crie um app → copie o nome do app e a API key. */
+const TURN = {
+  meteredApp: '',   // ex.: 'vzn' (de vzn.metered.live)
+  meteredKey: '',   // API key do painel da Metered (fica visível na página; restrinja ao domínio github.io lá no painel)
+}
 /* ===================================================================== */
 
 /* Modo REUNIÃO EXTERNA: o link "…/#m=<código>&t=<nome>" abre só a sala de
@@ -589,6 +597,7 @@ const vact = {}
 const firstSeenInRoom = {}   // peerId -> quando apareceu na minha sala
 const screenWait = {}        // peerId -> {since, asked}
 const badConn = new Set()    // pessoas da sala sem conexão direta
+const viaRelay = new Set()   // pessoas conectadas pelo retransmissor (TURN)
 let localStream = null, camTrack = null, screenStream = null
 const remote = {}
 let focusKey = null      // null = automático, '__grid' = grade, ou chave do bloco
@@ -638,19 +647,33 @@ if (!MEET && store.get('vzn-ok', false) && store.get('vzn-name', '')) start(stor
 addEventListener('hashchange', () => { if (/[#&]m=/.test(location.hash) !== !!MEET || (MEET && !location.hash.includes(MEET.id))) location.reload() })
 
 let histKey = 'vzn-hist'
+let turnServers = []
+async function loadTurn() {
+  if (!TURN.meteredApp || !TURN.meteredKey) return []
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 5000)
+    const r = await fetch(`https://${TURN.meteredApp}.metered.live/api/v1/turn/credentials?apiKey=${encodeURIComponent(TURN.meteredKey)}`, {signal: ctl.signal})
+    clearTimeout(t)
+    const list = await r.json()
+    return Array.isArray(list) ? list.filter(s => s && /^turns?:/i.test([].concat(s.urls)[0] || '')) : []
+  } catch { return [] }
+}
 async function start(name, av) {
   if (!name) return toast('Digite seu nome')
   me.name = name.slice(0, 24); me.av = validAv(av)
   store.set('vzn-name', me.name); store.set('vzn-av', me.av)
+  turnServers = await loadTurn()
+  // 10 relays de encontro (em vez de 5) para aguentar relays públicos fora do ar
+  const base = {appId: APP_ID, relayConfig: {redundancy: 10}, ...(turnServers.length ? {turnConfig: turnServers} : {})}
   if (MEET) {
     wsKey = await sha('vzn-meet|' + MEET.id)
-    cfg = {appId: APP_ID, password: 'vzn-meet|' + MEET.id}
+    cfg = {...base, password: 'vzn-meet|' + MEET.id}
     histKey = 'vzn-meet-' + MEET.id
     view = {type: 'voice', id: 'reuniao'}
   } else {
     store.set('vzn-ok', true)
     wsKey = await sha('vzn-agencia|' + PASSWORD)
-    cfg = {appId: APP_ID, password: 'vzn-agencia-qg|' + PASSWORD}
+    cfg = {...base, password: 'vzn-agencia-qg|' + PASSWORD}
   }
   hist = store.get(histKey, {})
   $('login').classList.add('hidden'); $('app').classList.remove('hidden')
@@ -1013,7 +1036,7 @@ async function leaveVoice(switching) {
   for (const id of Object.keys(remote)) dropRemote(id)
   analysers.clear(); speaking.clear(); focusKey = null
   for (const o of [firstSeenInRoom, screenWait]) for (const k in o) delete o[k]
-  badConn.clear()
+  badConn.clear(); viaRelay.clear()
   $('grid').innerHTML = ''
   me.voice = null; me.cam = false; me.screen = false
   if (!switching) { beep(780); setTimeout(() => beep(520), 120); broadcastState(); renderView() }
@@ -1238,7 +1261,7 @@ function renderGrid() {
       const src = avatarUrl(t.p.av, true); if (fig.getAttribute('src') !== src) fig.src = src
     }
     const bad = badConn.has(t.p.id)
-    el.querySelector('.tag').innerHTML = `${t.screen ? '<span class="live">AO VIVO</span>' : ''}${esc(t.p.name)}${t.p.id === selfId ? ' (você)' : ''}${bad ? ' · ⚠️ sem conexão' : t.screen && !t.track ? ' · carregando…' : ''}${!t.screen && !t.p.mic ? ' 🔇' : ''}`
+    el.querySelector('.tag').innerHTML = `${t.screen ? '<span class="live">AO VIVO</span>' : ''}${esc(t.p.name)}${t.p.id === selfId ? ' (você)' : ''}${viaRelay.has(t.p.id) ? ' <span title="Conectado pelo retransmissor">🛰️</span>' : ''}${bad ? ' · ⚠️ sem conexão' : t.screen && !t.track ? ' · carregando…' : ''}${!t.screen && !t.p.mic ? ' 🔇' : ''}`
     el.title = bad ? 'Não foi possível conectar direto com essa pessoa. Geralmente é firewall ou rede 4G/empresa bloqueando.' : ''
   }
   const hasFocus = tiles.some(t => t.key === fk)
@@ -1282,6 +1305,15 @@ setInterval(() => {
     } else delete screenWait[id]
   }
   if (changed) renderGrid()
+  // descobre quem está passando pelo retransmissor (para conferência)
+  for (const [id, pc] of Object.entries(conns)) {
+    pc.getStats?.().then(st => {
+      let pair; st.forEach(s => { if (s.type === 'transport' && s.selectedCandidatePairId) pair = st.get(s.selectedCandidatePairId) })
+      if (!pair) st.forEach(s => { if (s.type === 'candidate-pair' && s.nominated && s.state === 'succeeded') pair = s })
+      const relay = !!pair && ['localCandidateId', 'remoteCandidateId'].some(k => st.get(pair[k])?.candidateType === 'relay')
+      if (relay !== viaRelay.has(id)) { relay ? viaRelay.add(id) : viaRelay.delete(id); renderGrid() }
+    }).catch(() => {})
+  }
   // vídeo que deveria aparecer mas está sem imagem há mais de 8 s
   document.querySelectorAll('#grid .tile').forEach(el => {
     const v = el.querySelector('video'), tag = el.querySelector('.tag')
